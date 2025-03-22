@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import ReactMapGL, { Marker, Source, Layer } from "react-map-gl";
+import Map, { Marker, Source, Layer } from "react-map-gl/mapbox";
+// import Map, { Marker, Source, Layer } from "react-map-gl";
 import "mapbox-gl/dist/mapbox-gl.css";
 
 // Replace with your Mapbox access token
@@ -37,7 +38,7 @@ export default function App() {
   }, []);
 
   return (
-    <ReactMapGL
+    <Map
       {...viewport}
       width="100%"
       height="500px"
@@ -77,6 +78,6 @@ export default function App() {
       <Marker latitude={position[1]} longitude={position[0]}>
         <div>Current Position</div>
       </Marker>
-    </ReactMapGL>
+    </Map>
   );
 }
