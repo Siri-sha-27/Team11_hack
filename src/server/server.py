@@ -1,89 +1,105 @@
 import os
-import asyncio
-import json
+import time
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 import requests
-from fastapi import FastAPI, WebSocket
-from geopy.distance import geodesic
-from dotenv import load_dotenv
-
-# Load .env variables
-load_dotenv()
-MAPBOX_API_KEY = os.getenv("MAPBOX_API_KEY")
-
-if not MAPBOX_API_KEY:
-    raise ValueError("Missing MAPBOX_API_KEY. Please set it in .env file.")
-
-# Mapbox Directions API URL
-MAPBOX_URL = "https://api.mapbox.com/directions/v5/mapbox/driving-traffic/"
+import json
+from fastapi.responses import HTMLResponse
+from typing import List
+from starlette.websockets import WebSocketState
+from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI()
 
-# Define Start & End GPS Coordinates
-start_coords = [-122.4200, 37.7700]  # Example: San Francisco
-end_coords = [-122.4100, 37.7800]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allow all origins (use specific ones in production)
+    allow_credentials=True,
+    allow_methods=["*"],  # Allow all HTTP methods
+    allow_headers=["*"],  # Allow all headers
+)
+
+# OSRM URL for routing
+OSRM_URL = "http://router.project-osrm.org/route/v1/driving/"
+
+# WebSocket connections
+active_connections: List[WebSocket] = []
 
 
-# Get Route from Mapbox
-def get_route():
-    url = f"{MAPBOX_URL}{start_coords[0]},{start_coords[1]};{end_coords[0]},{end_coords[1]}"
-    params = {"access_token": MAPBOX_API_KEY, "geometries": "geojson", "steps": "true"}
+# Function to get route from OSRM
+def get_route(start_lon: float, start_lat: float, end_lon: float, end_lat: float):
+    # Construct the OSRM API request URL
+    url = f"{OSRM_URL}{start_lon},{start_lat};{end_lon},{end_lat}?overview=full&geometries=geojson&steps=true"
 
-    response = requests.get(url, params=params)
+    response = requests.get(url)
     data = response.json()
 
-    # Extracting the route coordinates
-    route_coords = data["routes"][0]["geometry"]["coordinates"]
-    return [(lat, lon) for lon, lat in route_coords]  # Convert to (lat, lon)
+    # Return the route geometry (GeoJSON) and steps data
+    print(
+        data["routes"][0]["geometry"]["coordinates"],
+        data["routes"][0]["legs"][0]["steps"],
+    )
+
+    return (
+        data["routes"][0]["geometry"]["coordinates"],
+        data["routes"][0]["legs"][0]["steps"],
+    )
 
 
-route_coords = get_route()
+@app.get("/")
+async def get():
+    # Serve the front-end HTML file for the React app
+    return HTMLResponse(open("index.html").read())
 
 
 @app.websocket("/ws/route")
-async def route_tracking(websocket: WebSocket):
+async def websocket_route(websocket: WebSocket):
     await websocket.accept()
+    active_connections.append(websocket)
 
-    total_distance = sum(
-        geodesic(route_coords[i], route_coords[i + 1]).meters
-        for i in range(len(route_coords) - 1)
-    )
-    speed_mps = 10  # Simulate speed of 10m/s
-    traveled_distance = 0
+    try:
+        while True:
+            # Wait for the start message containing coordinates from the user
+            data = await websocket.receive_json()
+            start_lon = data["start_lon"]
+            start_lat = data["start_lat"]
+            end_lon = data["end_lon"]
+            end_lat = data["end_lat"]
 
-    for i in range(len(route_coords) - 1):
-        traveled_distance += geodesic(route_coords[i], route_coords[i + 1]).meters
-        progress = traveled_distance / total_distance
-        current_position = route_coords[i]
+            # Get route and steps from OSRM
+            route, steps = get_route(start_lon, start_lat, end_lon, end_lat)
 
-        await websocket.send_text(
-            json.dumps(
-                {
-                    "lat": current_position[0],
-                    "lon": current_position[1],
-                    "progress": progress,
-                }
-            )
-        )
-        await asyncio.sleep(1)  # Simulate real-time updates
+            # Send route to React frontend for display
+            await websocket.send_json({"route": route, "steps": steps})
 
-    await websocket.send_text(
-        json.dumps(
-            {
-                "lat": route_coords[-1][0],
-                "lon": route_coords[-1][1],
-                "progress": 1.0,
-                "completed": True,
-            }
-        )
-    )
+    except WebSocketDisconnect:
+        active_connections.remove(websocket)
 
-    print(
-        json.dumps(
-            {
-                "lat": route_coords[-1][0],
-                "lon": route_coords[-1][1],
-                "progress": 1.0,
-                "completed": True,
-            }
-        )
-    )
+
+@app.websocket("/ws/drive")
+async def websocket_drive(websocket: WebSocket):
+    await websocket.accept()
+    active_connections.append(websocket)
+
+    try:
+        while True:
+            # Wait for the start message containing coordinates from the user
+
+            data = await websocket.receive_json()
+            start_lon = data["start_lon"]
+            start_lat = data["start_lat"]
+            end_lon = data["end_lon"]
+            end_lat = data["end_lat"]
+
+            route, steps = get_route(start_lon, start_lat, end_lon, end_lat)
+
+            # Start the vehicle simulation
+            for step in steps:
+                # Simulate movement along the route with speed limits and intervals
+                for i in range(0, len(route), 5):  # Move in intervals
+                    await websocket.send_json({"position": route[i]})
+                    time.sleep(1)  # Simulate one second per update
+
+            await websocket.send_json({"completed": True})
+
+    except WebSocketDisconnect:
+        active_connections.remove(websocket)
