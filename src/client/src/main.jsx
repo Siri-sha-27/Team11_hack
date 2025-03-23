@@ -9,16 +9,3 @@ createRoot(document.getElementById("root")).render(
     <App />
   </StrictMode>,
 );
-
-// // src/index.jsx
-// import React from "react";
-// import ReactDOM from "react-dom";
-// import App from "./App";
-// import { WebSocketProvider } from "./WebSocketContext"; // Import the WebSocket provider
-//
-// ReactDOM.render(
-//   <WebSocketProvider>
-//     <App />
-//   </WebSocketProvider>,
-//   document.getElementById("root"),
-// );
