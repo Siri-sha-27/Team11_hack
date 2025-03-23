@@ -8,13 +8,16 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 MAPQUEST_API_KEY = os.getenv("MAPQUEST_API_KEY")
 
 # Configure Gemini API
+from fastapi import FastAPI
+
+
+# Configure Gemini API
 genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel("gemini-1.5-flash")
 
 
 # OSRM API URL
 OSRM_URL = "http://router.project-osrm.org/route/v1/driving/"
-
 
 # Route Calculation Endpoint
 def get_fastest_route(
@@ -54,24 +57,15 @@ def optimize_route(start_lon: float, start_lat: float, end_lon: float, end_lat: 
     route based on the traffic patterns. Please provide the optimized route in JSON format, matching the input
     of the quickest route provided, for my application.
     """
-
-    response = model.generate_content(prompt)
-    print(response.text)
-    return {"optimized_route": response.text}
-
-
-# Health Check
-def health_check():
-    return {"status": "RescueRoute AI is running"}
-
-
-def traffic_check():
-    url = f"https://www.mapquestapi.com/traffic/v2/incidents?key={MAPQUEST_API_KEY}&boundingBox=39.95,-105.25,39.52,-104.71&filters=construction,incidents, event, congestion"
-    # https://www.mapquestapi.com/traffic/v2/incidents?key=KEY&boundingBox=39.95,-105.25,39.52,-104.71&filters=construction,incidents
-    response = requests.get(url)
-    print(response.json())
-    return response.json()
-
+    
+    route_info = {
+        "coordinates": data["routes"][0]["geometry"]["coordinates"],
+        "steps": data["routes"][0]["legs"][0]["steps"]
+    }
+    
+    
+    print(route_info)
+    return route_info
 
 def route_analysis(start_lon: float, start_lat: float, end_lon: float, end_lat: float):
     # mapquest_url = f"https://www.mapquestapi.com/directions/v2/route?key={MAPQUEST_API_KEY}&from={start_lat},{start_lon}&to={end_lat},{end_lon}"
