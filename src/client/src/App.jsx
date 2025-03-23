@@ -1,83 +1,162 @@
-import { useEffect, useState } from "react";
-import Map, { Marker, Source, Layer } from "react-map-gl/mapbox";
-// import Map, { Marker, Source, Layer } from "react-map-gl";
-import "mapbox-gl/dist/mapbox-gl.css";
+import React, { useState, useEffect, useRef } from "react";
+import L from "leaflet";
+import "leaflet/dist/leaflet.css";
 
-// Replace with your Mapbox access token
 const MAPBOX_TOKEN =
   "pk.eyJ1IjoianB3YXJyNyIsImEiOiJjbThrbTI5YncweWw5Mm9vZzZlcnRzcDN5In0.cz4Jo4SoWQ-1dNT-ZDuDXg";
 
-// Starting & Ending Coordinates
-const startPosition = [-122.42, 37.77]; // San Francisco Example
-const endPosition = [-122.41, 37.78];
+const WS_URL = "ws://localhost:8000/ws/";
 
-export default function App() {
+const App = () => {
+  const [map, setMap] = useState(null);
   const [route, setRoute] = useState([]);
-  const [position, setPosition] = useState(startPosition);
-  const [viewport, setViewport] = useState({
-    latitude: 37.77,
-    longitude: -122.42,
-    zoom: 14,
-    bearing: 0,
-    pitch: 0,
-  });
+  const [position, setPosition] = useState(null);
+  const [start, setStart] = useState(null);
+  const [end, setEnd] = useState(null);
+  const [wsRoute, setWsRoute] = useState(null);
+  const [wsDrive, setWsDrive] = useState(null);
+  const carMarkerRef = useRef(null);
 
+  // Initialize map
   useEffect(() => {
-    const ws = new WebSocket("ws://localhost:8000/ws/route");
+    const mapInstance = L.map("map").setView([37.77, -122.42], 12); // Default to San Francisco
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png").addTo(
+      mapInstance,
+    );
 
-    ws.onmessage = (event) => {
+    setMap(mapInstance);
+
+    return () => mapInstance.remove();
+  }, []);
+
+  // WebSocket connection to Python FastAPI server
+  useEffect(() => {
+    const socket = new WebSocket(WS_URL + "route");
+
+    socket.onopen = () => {
+      console.log("WebSocket connected");
+    };
+
+    socket.onmessage = (event) => {
       const data = JSON.parse(event.data);
-      setPosition([data.lon, data.lat]);
-
-      if (!data.completed) {
-        setRoute((prev) => [...prev, [data.lon, data.lat]]);
+      if (data.route) {
+        setRoute(data.route);
+        setStart(data.route[0]);
+        setEnd(data.route[data.route.length - 1]);
+      }
+      if (data.position) {
+        setPosition(data.position);
       }
     };
 
-    return () => ws.close();
+    setWsRoute(socket);
+
+    return () => {
+      socket.close();
+    };
   }, []);
 
+  useEffect(() => {
+    const socket = new WebSocket(WS_URL + "drive");
+
+    socket.onopen = () => {
+      console.log("WebSocket for drive connected");
+    };
+
+    socket.onmessage = (event) => {
+      const data = JSON.parse(event.data);
+      if (data.position) {
+        setPosition(data.position);
+      }
+    };
+
+    setWsDrive(socket);
+
+    return () => {
+      socket.close();
+    };
+  }, []);
+
+  const handleSubmit = () => {
+    if (wsRoute && wsRoute.readyState === WebSocket.OPEN) {
+      wsRoute.send(
+        JSON.stringify({
+          start_lon: -122.42,
+          start_lat: 37.77,
+          end_lon: -122.37,
+          end_lat: 37.78,
+        }),
+      );
+    } else {
+      console.error("WebSocket for route is not connected");
+    }
+  };
+
+  const handleBeginDrive = () => {
+    if (wsDrive && wsDrive.readyState === WebSocket.OPEN) {
+      wsDrive.send(
+        JSON.stringify({
+          start_lon: -122.42,
+          start_lat: 37.77,
+          end_lon: -122.37,
+          end_lat: 37.78,
+        }),
+      );
+    } else {
+      console.error("WebSocket for drive is not connected");
+    }
+  };
+
+  useEffect(() => {
+    if (map && route.length > 0) {
+      const latlngs = route.map((coord) => [coord[1], coord[0]]);
+      L.polyline(latlngs, { color: "blue" }).addTo(map);
+
+      if (start) {
+        L.marker([start[1], start[0]]).addTo(map).bindPopup("Start");
+      }
+
+      if (end) {
+        L.marker([end[1], end[0]]).addTo(map).bindPopup("End");
+      }
+    }
+  }, [map, route, start, end]);
+
+  useEffect(() => {
+    if (map && position) {
+      // Remove previous marker if it exists
+      if (carMarkerRef.current) {
+        map.removeLayer(carMarkerRef.current);
+      }
+
+      // Create a new marker and store it in the ref
+      const newMarker = L.marker([position[1], position[0]], {
+        icon: L.divIcon({ className: "car-icon", html: "🚗" }),
+      })
+        .addTo(map)
+        .bindPopup("Car");
+
+      carMarkerRef.current = newMarker;
+
+      // Center the map on the new position
+      map.setView([position[1], position[0]]);
+    }
+  }, [map, position]);
+
   return (
-    <Map
-      {...viewport}
-      width="100%"
-      height="500px"
-      mapboxApiAccessToken={MAPBOX_TOKEN}
-      onViewportChange={setViewport}
+    <div
+      style={{ display: "flex", flexDirection: "column", alignItems: "center" }}
     >
-      {/* Route Line */}
-      <Source
-        id="route"
-        type="geojson"
-        data={{
-          type: "FeatureCollection",
-          features: [
-            {
-              type: "Feature",
-              geometry: { type: "LineString", coordinates: route },
-            },
-          ],
-        }}
-      >
-        <Layer
-          id="routeLayer"
-          type="line"
-          paint={{ "line-color": "#007cbf", "line-width": 4 }}
-        />
-      </Source>
-
-      {/* Start & End Markers */}
-      <Marker latitude={startPosition[1]} longitude={startPosition[0]}>
-        <div>Start</div>
-      </Marker>
-      <Marker latitude={endPosition[1]} longitude={endPosition[0]}>
-        <div>End</div>
-      </Marker>
-
-      {/* Moving Marker */}
-      <Marker latitude={position[1]} longitude={position[0]}>
-        <div>Current Position</div>
-      </Marker>
-    </Map>
+      <div>
+        <button onClick={handleSubmit}>Submit Route</button>
+        <button onClick={handleBeginDrive}>Begin Drive</button>
+      </div>
+      <div
+        id="map"
+        style={{ display: "flex", height: "50vh", width: "50vw" }}
+      ></div>
+    </div>
   );
-}
+};
+
+export default App;
